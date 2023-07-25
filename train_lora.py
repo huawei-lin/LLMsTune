@@ -16,6 +16,7 @@ import os
 import copy
 import json
 import logging
+import argparse
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Sequence
 from peft import (
@@ -198,32 +199,32 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
 
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args, other_args = parser.parse_args_into_dataclasses(return_remaining_strings=True)
+    other_parser = argparse.ArgumentParser()
+    other_parser.add_argument('--load_in_4bit', default=False)
+    other_parser.add_argument('--load_in_8bit', default=False)
+    other_args = other_parser.parse_args(other_args)
 
-#     # load_in_8bit = True if not load_in_4bit else False 
-#     load_in_4bit = True
-#     # load_in_8bit = False
-#     bnb_config = BitsAndBytesConfig(
-#         load_in_4bit=load_in_4bit,
-#         # load_in_8bit=load_in_8bit,
-#         bnb_4bit_use_double_quant=True,
-#         bnb_4bit_quant_type="nf4",
-#         bnb_4bit_compute_dtype=torch.float16,
-#     )
+    model = None
+    bnb_config = None
+    if other_args.load_in_8bit == True or other_args.load_in_4bit == True:
+        load_in_8bit = False if load_in_4bit else other_args.load_in_8bit
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+        )
 
     model = transformers.AutoModelForCausalLM.from_pretrained(
-    # model = transformers.LlamaForCausalLM.from_pretrained(
         model_args.model_name_or_path,
-        # quantization_config=bnb_config,
-        # cache_dir=training_args.cache_dir,
+        quantization_config=bnb_config,
     )
     # model = prepare_model_for_kbit_training(model)
 
-
     tokenizer = transformers.AutoTokenizer.from_pretrained(
-    # tokenizer = transformers.LlamaTokenizer.from_pretrained(
         model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
         use_fast=False,
@@ -288,15 +289,15 @@ def train():
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
-#     old_state_dict = model.state_dict
-#     model.state_dict = (
-#         lambda self, *_, **__: get_peft_model_state_dict(
-#             self, old_state_dict()
-#         )
-#     ).__get__(model, type(model))
-# 
-#     if torch.__version__ >= "2":
-#         model = torch.compile(model)
+    old_state_dict = model.state_dict
+    model.state_dict = (
+        lambda self, *_, **__: get_peft_model_state_dict(
+            self, old_state_dict()
+        )
+    ).__get__(model, type(model))
+
+    if torch.__version__ >= "2":
+        model = torch.compile(model)
 
     trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     trainer.save_state()
