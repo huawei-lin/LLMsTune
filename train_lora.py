@@ -201,13 +201,18 @@ def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args, other_args = parser.parse_args_into_dataclasses(return_remaining_strings=True)
     other_parser = argparse.ArgumentParser()
-    other_parser.add_argument('--load_in_4bit', default=False)
-    other_parser.add_argument('--load_in_8bit', default=False)
+    other_parser.add_argument('--load_in_4bit', type=bool, default=False)
+    other_parser.add_argument('--load_in_8bit', type=bool, default=False)
+    other_parser.add_argument('--use_lora', type=bool, default=False)
+    other_parser.add_argument('--lora_r', type=int, default=8)
+    other_parser.add_argument('--lora_alpha', type=int, default=16)
     other_args = other_parser.parse_args(other_args)
+    print(other_args, other_args.use_lora)
 
     model = None
     bnb_config = None
     if other_args.load_in_8bit == True or other_args.load_in_4bit == True:
+        load_in_4bit = other_args.load_in_4bit
         load_in_8bit = False if load_in_4bit else other_args.load_in_8bit
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=load_in_4bit,
@@ -221,7 +226,6 @@ def train():
         model_args.model_name_or_path,
         quantization_config=bnb_config,
     )
-    # model = prepare_model_for_kbit_training(model)
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
@@ -246,25 +250,29 @@ def train():
         model=model,
     )
 
-    config = LoraConfig(
-        r=8,
-        lora_alpha=16,
-        target_modules = [
-            "q_proj",
-            "v_proj",
-        ],
-        lora_dropout=0.05,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
+    if other_args.use_lora == True:
+        config = LoraConfig(
+            r=other_args.lora_r,
+            lora_alpha=other_args.lora_alpha,
+            target_modules = [
+                "q_proj",
+                "v_proj",
+            ],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        print("Use LoRA:", config)
+    
+        model = get_peft_model(model, config)
+        model.print_trainable_parameters()
 
-    model = get_peft_model(model, config)
     if training_args.resume_from_checkpoint:
         # Check the available weights and load them
         checkpoint_name = os.path.join(
             training_args.resume_from_checkpoint, "pytorch_model.bin"
         )  # Full checkpoint
-        if not os.path.exists(checkpoint_name):
+        if not os.path.exists(checkpoint_name) and other_args.use_lora:
             checkpoint_name = os.path.join(
                 training_args.resume_from_checkpoint, "adapter_model.bin"
             )  # only LoRA model - LoRA config above has to fit
@@ -280,24 +288,23 @@ def train():
             print(f"Checkpoint {checkpoint_name} not found")
 
 
-    model.print_trainable_parameters()
     model.config.use_cache = False
-
     model.is_parallelizable = True
     model.model_parallel = True
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
-    old_state_dict = model.state_dict
-    model.state_dict = (
-        lambda self, *_, **__: get_peft_model_state_dict(
-            self, old_state_dict()
-        )
-    ).__get__(model, type(model))
-
-    if torch.__version__ >= "2":
-        model = torch.compile(model)
+    if other_args.use_lora:
+        old_state_dict = model.state_dict
+        model.state_dict = (
+            lambda self, *_, **__: get_peft_model_state_dict(
+                self, old_state_dict()
+            )
+        ).__get__(model, type(model))
+    
+        if torch.__version__ >= "2":
+            model = torch.compile(model)
 
     trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     trainer.save_state()
