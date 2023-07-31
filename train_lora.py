@@ -257,6 +257,8 @@ def train():
             target_modules = [
                 "q_proj",
                 "v_proj",
+                "k_proj",
+                "o_proj",
             ],
             lora_dropout=0.05,
             bias="none",
@@ -287,7 +289,6 @@ def train():
         else:
             print(f"Checkpoint {checkpoint_name} not found")
 
-
     model.config.use_cache = False
     model.is_parallelizable = True
     model.model_parallel = True
@@ -295,16 +296,8 @@ def train():
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
-    if other_args.use_lora:
-        old_state_dict = model.state_dict
-        model.state_dict = (
-            lambda self, *_, **__: get_peft_model_state_dict(
-                self, old_state_dict()
-            )
-        ).__get__(model, type(model))
-    
-        if torch.__version__ >= "2":
-            model = torch.compile(model)
+    if other_args.use_lora and torch.__version__ >= "2":
+        model = torch.compile(model)
 
     trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
     trainer.save_state()
