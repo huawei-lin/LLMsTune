@@ -206,6 +206,7 @@ def train():
     other_parser.add_argument('--use_lora', type=bool, default=False)
     other_parser.add_argument('--lora_r', type=int, default=8)
     other_parser.add_argument('--lora_alpha', type=int, default=16)
+    other_parser.add_argument('--lora_target_modules', nargs="+", default=['q_proj, v_proj'])
     other_args = other_parser.parse_args(other_args)
     print(other_args, other_args.use_lora)
 
@@ -254,12 +255,7 @@ def train():
         config = LoraConfig(
             r=other_args.lora_r,
             lora_alpha=other_args.lora_alpha,
-            target_modules = [
-                "q_proj",
-                "v_proj",
-                "k_proj",
-                "o_proj",
-            ],
+            target_modules = other_args.lora_target_modules,
             lora_dropout=0.05,
             bias="none",
             task_type="CAUSAL_LM",
