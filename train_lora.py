@@ -61,6 +61,7 @@ class ModelArguments:
 @dataclass
 class DataArguments:
     data_path: str = field(default=None, metadata={"help": "Path to the training data."})
+    eval_data_path: str = field(default=None, metadata={"help": "Path to the eval data."})
 
 
 @dataclass
@@ -193,8 +194,11 @@ class DataCollatorForSupervisedDataset(object):
 def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, data_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
     train_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.data_path)
+    eval_dataset = None
+    if data_args.eval_data_path is not None:
+        eval_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.eval_data_path)
     data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
-    return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
+    return dict(train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator)
 
 
 def train():
@@ -227,6 +231,8 @@ def train():
         model_args.model_name_or_path,
         quantization_config=bnb_config,
     )
+    if other_args.load_in_8bit == True or other_args.load_in_4bit == True:
+        model = prepare_model_for_kbit_training(model)
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
