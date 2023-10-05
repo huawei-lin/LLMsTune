@@ -17,6 +17,7 @@ import copy
 import json
 import logging
 import argparse
+import distutils.util
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Sequence
 from peft import (
@@ -205,9 +206,9 @@ def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args, other_args = parser.parse_args_into_dataclasses(return_remaining_strings=True)
     other_parser = argparse.ArgumentParser()
-    other_parser.add_argument('--load_in_4bit', type=bool, default=False)
-    other_parser.add_argument('--load_in_8bit', type=bool, default=False)
-    other_parser.add_argument('--use_lora', type=bool, default=False)
+    other_parser.add_argument('--load_in_4bit', type=lambda x:bool(distutils.util.strtobool(x)), default=False)
+    other_parser.add_argument('--load_in_8bit', type=lambda x:bool(distutils.util.strtobool(x)), default=False)
+    other_parser.add_argument('--use_lora', type=lambda x:bool(distutils.util.strtobool(x)), default=False)
     other_parser.add_argument('--lora_r', type=int, default=8)
     other_parser.add_argument('--lora_alpha', type=int, default=16)
     other_parser.add_argument('--lora_target_modules', nargs="+", default=['q_proj, v_proj'])
@@ -272,6 +273,10 @@ def train():
         model = get_peft_model(model, config)
         model.print_trainable_parameters()
 
+        model.config.use_cache = False
+        model.is_parallelizable = True
+        model.model_parallel = True
+
     if training_args.resume_from_checkpoint:
         # Check the available weights and load them
         checkpoint_name = os.path.join(
@@ -292,9 +297,6 @@ def train():
         else:
             print(f"Checkpoint {checkpoint_name} not found")
 
-    model.config.use_cache = False
-    model.is_parallelizable = True
-    model.model_parallel = True
 
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
